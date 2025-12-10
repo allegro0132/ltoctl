@@ -3,7 +3,6 @@
 # --- Configuration Parameters ---
 # **IMPORTANT: Configure your environment here**
 TAPE_DEVICE="/dev/nst0"                         # Your LTO-6 tape drive device name (Non-Rewinding)
-# BACKUP_SOURCE="/path/to/your/source/directory"  # Your main backup source directory
 LOG_FILE_BASE="/var/log/lto_backup"            # Base path for log files
 BLOCK_SIZE="1024"
 # --- Script Variables ---
@@ -102,8 +101,8 @@ run_backup() {
         # tar -cv -C "$BACKUP_SOURCE" "$ITEM_NAME" 2>&1 | \
         # dd of="$TAPE_DEVICE" bs=10K status=progress
         # DD_EXIT_STATUS=$?
-        if tar -cvf "$TAPE_DEVICE" -b "$BLOCK_SIZE" -C "$BACKUP_SOURCE" "$ITEM_NAME" 2>&1 >> "$CURRENT_LOG_FILE"; then
         # if [ $DD_EXIT_STATUS -eq 0 ]; then
+        if tar -cvf "$TAPE_DEVICE" -b "$BLOCK_SIZE" -C "$BACKUP_SOURCE" "$ITEM_NAME" 2>&1 >> "$CURRENT_LOG_FILE"; then
             log_message "SUCCESS: Backed up $ITEM_NAME."
             ARCHIVE_COUNT=$((ARCHIVE_COUNT + 1))
             # Write EOF check
@@ -123,6 +122,88 @@ run_backup() {
     log_message "--- Backup Finished. Total Archives: $ARCHIVE_COUNT ---"
 }
 
+run_restore() {
+    # Define the specific log file for this restore run
+    CURRENT_LOG_FILE="${LOG_FILE_BASE}_$(date +%Y%m%d_%H%M%S).log"
+    local FS_COUNT="$1"
+    local DEST_DIR="$2"
+    local RESTORE_NUM="$3"
+    local FILE_POINTER=$FS_COUNT
+
+    if [[ -z "$RESTORE_NUM" ]]; then
+        RESTORE_NUM=-1
+    fi
+
+    # 1. Parameter Validation
+    if [[ ! "$FS_COUNT" =~ ^[0-9]+$ ]]; then
+        log_message "Warning: restore command requires a valid archive number (starting from 0), set defaulting to 0."
+        FS_COUNT=0
+        FILE_POINTER=0
+    fi
+
+    # 2. Check or create destination directory
+    if [[ -n "$DEST_DIR" ]]; then
+        if [ ! -d "$DEST_DIR" ]; then
+            log_message "WARNING: Destination directory $DEST_DIR does not exist. Attempting to create..."
+            if ! sudo mkdir -p "$DEST_DIR"; then
+                log_message "CRITICAL ERROR: Cannot create destination directory $DEST_DIR. Aborting restore."
+                return 1
+            fi
+        fi
+    else
+        # Default restore to current directory
+        DEST_DIR="."
+    fi
+
+    log_message "--- Starting Restore Process ---"
+    log_message "Start Archive Index: #$FILE_POINTER"
+    log_message "Target Directory: $DEST_DIR"
+    log_message "--------------------"
+
+    # 3. Tape Positioning
+    log_message "1. Rewinding tape to Beginning of Tape (BOT)."
+    if ! tape_command "rewind"; then
+        log_message "ERROR: Rewind failed. Aborting."
+        return 1
+    fi
+
+    if [ "$FS_COUNT" -gt 0 ]; then
+        log_message "2. Skipping $FS_COUNT file marks to position at Archive #$FILE_POINTER."
+        if ! tape_command "fsf" "$FS_COUNT"; then
+            log_message "ERROR: Failed to position tape. Aborting."
+            return 1
+        fi
+    else
+        log_message "2. Restoring from Archive #0."
+    fi
+
+    # 4. Restore Operation
+    # Using -b 2048 (1MB block size) to match the write blocking factor.
+    log_message "3. Executing restore command: tar -xvf $TAPE_DEVICE -b $BLOCK_SIZE -C $DEST_DIR"
+
+    while [ "$RESTORE_NUM" -ne 0 ]; do
+        log_message "Restoring Archive #$FILE_POINTER ..."
+        # Perform the restore
+        if tar -xvf "$TAPE_DEVICE" -b "$BLOCK_SIZE" -C "$DEST_DIR" 2>&1 >> "$CURRENT_LOG_FILE"; then
+            log_message "SUCCESS: Archive $FILE_POINTER successfully restored to $DEST_DIR"
+            # Skip end EOF marker for next operation
+            if tape_command "fsf" "1"; then
+                log_message "Note: The tape head is now positioned after the restored archive."
+            else
+                log_message "ERROR: Failed to skip EOF marker after restore. Exit Status: $?."
+                break
+            fi
+        else
+            log_message "ERROR: tar failed during restoration. Exit Status: $?. Please check the log file."
+            break
+        fi
+        RESTORE_NUM=$((RESTORE_NUM - 1))
+        FILE_POINTER=$((FILE_POINTER + 1))
+    done
+
+    log_message "--- Restore Process Finished ---"
+}
+
 # --- Main Script Execution ---
 
 # Check if a subcommand was provided
@@ -139,12 +220,16 @@ if [ $# -eq 0 ]; then
     echo ""
     echo "Backup Command:"
     echo "  backup [BACKUP_SOURCE_DIR]            - Run the full folder/file backup process."
+    echo ""
+    echo "Restore Command:"
+    echo "  restore [START_INDEX] [DEST_PATH] [NUM_ARCHIVES] - Restore a specific archive by 0-based index."
     exit 1
 fi
 
 SUBCOMMAND=$1
 ARGUMENT=$2
 BACKUP_ARGUMENT=$3
+RESTORE_NUM_ARG=$4
 
 case "$SUBCOMMAND" in
     status|rewind|eject|rewoffl|eof|fsf|bsf)
@@ -167,6 +252,11 @@ case "$SUBCOMMAND" in
     backup)
         # Run the full backup function
         run_backup "$ARGUMENT" "$BACKUP_ARGUMENT"
+        ;;
+
+    restore)
+        # Run the restore function
+        run_restore "$ARGUMENT" "$BACKUP_ARGUMENT" "$RESTORE_NUM_ARG"
         ;;
 
     *)

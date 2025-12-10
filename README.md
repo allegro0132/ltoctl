@@ -6,6 +6,7 @@
 
 - **Tape Management**: Easy-to-use commands for common tape operations (status, rewind, eject, seeking).
 - **Automated Backup**: Iterates through a source directory and writes each item (file or folder) as a separate archive on the tape.
+- **Restore Capability**: Retrieve specific archives or full backups from tape to a specified location.
 - **Resume Capability**: Supports resuming a backup job from a specific file/folder if a previous run was interrupted.
 - **Logging**: Automatically logs operations to a file and the console.
 
@@ -80,11 +81,41 @@ Back up all items in `/mnt/data` to the tape.
 **2. Resume Backup:**
 If a backup failed or was stopped, you can resume it starting from a specific folder or file name. The script will skip all items alphabetically before this name.
 
-```bash
 # Resume starting from the folder "photos_2023"
 ./ltoctl backup /mnt/data photos_2023
 ```
 
+### Restore Command
+
+The restore command allows you to retrieve archives from the tape. You can specify which archive index to start from, where to restore them, and how many archives to retrieve.
+
+**Syntax:**
+```bash
+./ltoctl restore [START_INDEX] [DEST_PATH] [NUM_ARCHIVES]
+```
+
+- `START_INDEX`: The 0-based index of the archive on tape to start restoring. (Default: 0)
+- `DEST_PATH`: The destination directory. (Default: current directory `.`)
+- `NUM_ARCHIVES`: The number of sequential archives to restore. (Default: Restore until end of tape or error)
+
+**Examples:**
+
+**1. Restore everything to current directory:**
+```bash
+./ltoctl restore
+```
+
+**2. Restore the first archive (index 0) to `/tmp/restore`:**
+```bash
+./ltoctl restore 0 /tmp/restore 1
+```
+
+**3. Restore 5 archives starting from index 3:**
+```bash
+./ltoctl restore 3 /mnt/recovery 5
+```
+
+## Logging
 ## Logging
 
 Logs are generated with a timestamp in the filename:
