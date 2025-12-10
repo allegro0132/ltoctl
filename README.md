@@ -81,11 +81,12 @@ Back up all items in `/mnt/data` to the tape.
 **2. Resume Backup:**
 If a backup failed or was stopped, you can resume it starting from a specific folder or file name. The script will skip all items alphabetically before this name.
 
-# Resume starting from the folder "photos_2023"
+#### Resume starting from the folder "photos_2023"
+```bash
 ./ltoctl backup /mnt/data photos_2023
 ```
 
-### Restore Command
+## Restore Command
 
 The restore command allows you to retrieve archives from the tape. You can specify which archive index to start from, where to restore them, and how many archives to retrieve.
 
