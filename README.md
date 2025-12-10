@@ -4,7 +4,7 @@
 
 ## Features
 
-- **Tape Management**: Easy-to-use commands for common tape operations (status, rewind, eject, seeking).
+- **Tape Management**: Easy-to-use commands for common tape operations (status, rewind, eject, seek, erase, retension).
 - **Automated Backup**: Iterates through a source directory and writes each item (file or folder) as a separate archive on the tape.
 - **Restore Capability**: Retrieve specific archives or full backups from tape to a specified location.
 - **Resume Capability**: Supports resuming a backup job from a specific file/folder if a previous run was interrupted.
@@ -116,7 +116,6 @@ The restore command allows you to retrieve archives from the tape. You can speci
 ./ltoctl restore 3 /mnt/recovery 5
 ```
 
-## Logging
 ## Logging
 
 Logs are generated with a timestamp in the filename:
