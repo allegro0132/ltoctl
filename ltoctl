@@ -1,0 +1,176 @@
+#!/bin/bash
+
+# --- Configuration Parameters ---
+# **IMPORTANT: Configure your environment here**
+TAPE_DEVICE="/dev/nst0"                         # Your LTO-6 tape drive device name (Non-Rewinding)
+# BACKUP_SOURCE="/path/to/your/source/directory"  # Your main backup source directory
+LOG_FILE_BASE="/var/log/lto_backup"            # Base path for log files
+BLOCK_SIZE="1024"
+# --- Script Variables ---
+ARCHIVE_COUNT=0
+# Function to write messages to the log file and console (for backup operations)
+log_message() {
+    # If the log file is not yet defined (i.e., not a backup run), use console only
+    if [[ -z "$CURRENT_LOG_FILE" ]]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
+    else
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$CURRENT_LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
+    fi
+}
+
+# --- Tape Management Functions ---
+
+# Function to execute mt commands
+tape_command() {
+    local cmd="$1"
+    local arg="$2"
+    log_message "Executing mt command: mt -f $TAPE_DEVICE $cmd $arg"
+
+    # Check if device is configured before running mt
+    if [ ! -c "$TAPE_DEVICE" ]; then
+        log_message "ERROR: Tape device $TAPE_DEVICE is not accessible or not configured. Cannot execute $cmd."
+        return 1
+    fi
+
+    if [[ -z "$arg" ]]; then
+        mt -f "$TAPE_DEVICE" "$cmd"
+    else
+        mt -f "$TAPE_DEVICE" "$cmd" "$arg"
+    fi
+
+    if [ $? -eq 0 ]; then
+        log_message "Successfully executed $cmd."
+        return 0
+    else
+        log_message "ERROR: Failed to execute $cmd. Check device status and log."
+        return 1
+    fi
+}
+
+# --- Backup Function (from previous script) ---
+run_backup() {
+    # Define the specific log file for this backup run
+    CURRENT_LOG_FILE="${LOG_FILE_BASE}_$(date +%Y%m%d_%H%M%S).log"
+    local BACKUP_SOURCE="$1"
+    local START_ARCHIVE="$2"
+
+    # ... (Rest of the backup logic goes here) ...
+    # Simplified version for demonstration. You would insert the full backup logic here.
+
+    log_message "--- Starting Backup Run ---"
+
+    if [ ! -d "$BACKUP_SOURCE" ]; then
+        log_message "ERROR: Backup source directory $BACKUP_SOURCE does not exist. Aborting backup."
+        return 1
+    fi
+
+    log_message "Tape Device: $TAPE_DEVICE"
+    log_message "Log File: $CURRENT_LOG_FILE"
+
+    # Check for tape device validity before starting the main loop
+    if [ ! -c "$TAPE_DEVICE" ]; then
+        log_message "CRITICAL ERROR: Tape device $TAPE_DEVICE not found. Cannot perform backup."
+        return 1
+    fi
+    if [ -n "$START_ARCHIVE" ]; then
+        SHOULD_BACKUP="false"
+        log_message "RESUME MODE: Starting backup from archive named: $START_ARCHIVE"
+        log_message "---------------------------------------------------------------------"
+    else
+        SHOULD_BACKUP="true"  # Default
+        log_message "FULL BACKUP MODE: Starting from the first item."
+    fi
+
+    # Iterate through all files and directories (depth 1)
+    # find "$BACKUP_SOURCE" -maxdepth 1 -mindepth 1 | while read -r ITEM_PATH; do
+    while read -r ITEM_PATH; do
+        ITEM_NAME=$(basename "$ITEM_PATH")
+        if [ "$SHOULD_BACKUP" == "false" ]; then
+            if [ "$ITEM_NAME" == "$START_ARCHIVE" ]; then
+                SHOULD_BACKUP="true"
+                log_message "CHECKPOINT REACHED: Found $ITEM_NAME. Starting backups now."
+            else
+                log_message "SKIP: Skipping $ITEM_NAME..."
+                continue
+            fi
+        fi
+
+        log_message "Processing: $ITEM_NAME"
+
+        # TAR command execution (with EOM check logic)
+        # tar -cv -C "$BACKUP_SOURCE" "$ITEM_NAME" 2>&1 | \
+        # dd of="$TAPE_DEVICE" bs=10K status=progress
+        # DD_EXIT_STATUS=$?
+        if tar -cvf "$TAPE_DEVICE" -b "$BLOCK_SIZE" -C "$BACKUP_SOURCE" "$ITEM_NAME" 2>&1 >> "$CURRENT_LOG_FILE"; then
+        # if [ $DD_EXIT_STATUS -eq 0 ]; then
+            log_message "SUCCESS: Backed up $ITEM_NAME."
+            ARCHIVE_COUNT=$((ARCHIVE_COUNT + 1))
+            # Write EOF check
+            #if ! mt -f "$TAPE_DEVICE" eof; then
+            #    log_message "CRITICAL WARNING: EOF marker failed. Likely End of Media (EOM). Halting backups."
+            #    break # Stop the loop
+            #else
+            #    log_message "Wrote EOF marker."
+            #fi
+
+        else
+            log_message "ERROR: tar failed for $ITEM_NAME. Exit status: $?."
+            log_message "Detected Tape Write Error! Halting all subsequent backups (EOM suspected)."
+            break # Stop the loop upon write error
+        fi
+    done < <(ls -A1 "$BACKUP_SOURCE")
+    log_message "--- Backup Finished. Total Archives: $ARCHIVE_COUNT ---"
+}
+
+# --- Main Script Execution ---
+
+# Check if a subcommand was provided
+if [ $# -eq 0 ]; then
+    echo "Usage: $0 <command> [argument]"
+    echo ""
+    echo "Tape Management Commands (alias: $TAPE_DEVICE):"
+    echo "  status            - Check tape drive status."
+    echo "  rewind            - Rewind the tape to the start."
+    echo "  eject | rewoffl   - Rewind and eject the tape."
+    echo "  eof [N]           - Write N End-of-File marks (default: 1)."
+    echo "  fsf [N]           - Forward space N file marks (default: 1)."
+    echo "  bsf [N]           - Backward space N file marks (default: 1)."
+    echo ""
+    echo "Backup Command:"
+    echo "  backup [BACKUP_SOURCE_DIR]            - Run the full folder/file backup process."
+    exit 1
+fi
+
+SUBCOMMAND=$1
+ARGUMENT=$2
+BACKUP_ARGUMENT=$3
+
+case "$SUBCOMMAND" in
+    status|rewind|eject|rewoffl|eof|fsf|bsf)
+        # Handle simple mt commands
+        if [[ "$SUBCOMMAND" == "eject" ]]; then
+            SUBCOMMAND="rewoffl" # Map eject to rewoffl
+        fi
+
+        # Check if an argument (N) is required for commands like fsf/bsf/eof
+        if [[ "$SUBCOMMAND" == "fsf" || "$SUBCOMMAND" == "bsf" || "$SUBCOMMAND" == "eof" ]]; then
+            # Default N to 1 if no argument is provided
+            if [[ -z "$ARGUMENT" ]]; then
+                ARGUMENT="1"
+            fi
+        fi
+
+        tape_command "$SUBCOMMAND" "$ARGUMENT"
+        ;;
+
+    backup)
+        # Run the full backup function
+        run_backup "$ARGUMENT" "$BACKUP_ARGUMENT"
+        ;;
+
+    *)
+        log_message "ERROR: Unknown command '$SUBCOMMAND'. Run script without arguments for usage."
+        exit 1
+        ;;
+esac
